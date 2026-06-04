@@ -99,13 +99,20 @@ class MightyCTransformer(Transformer):
     def func_decl(self, meta, items: list) -> mc_ast.FuncDecl:
         ret_type: mc_ast.TypeAnnotation = items[0]
         name = str(items[1])
-        # items[2] is either a param_list (list[ParamDecl]) or the block
-        if len(items) == 4:
+        
+        # Check if the last item is a Block
+        if len(items) >= 3 and isinstance(items[-1], mc_ast.Block):
+            body = items[-1]
+            params = items[2] if len(items) == 4 else []
+        elif len(items) == 3 and not isinstance(items[-1], mc_ast.Block):
+            # This is a prototype with params, no body
+            body = None
             params = items[2]
-            body = items[3]
         else:
+            # Prototype with no params, no body
+            body = None
             params = []
-            body = items[2]
+            
         return mc_ast.FuncDecl(
             return_type=ret_type,
             name=name,

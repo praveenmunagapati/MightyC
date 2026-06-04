@@ -64,7 +64,7 @@ GRAMMAR = r"""
     // Declarations
     // ================================================================
 
-    func_decl: type_spec IDENT "(" param_list? ")" block
+    func_decl: type_spec IDENT "(" param_list? ")" (block | ";")
 
     param_list: param ("," param)*
     param: type_spec IDENT
@@ -144,12 +144,12 @@ GRAMMAR = r"""
     ?expr: assign_expr
 
     ?assign_expr: logical_or_expr
-                | postfix_expr "=" assign_expr          -> assign_eq
-                | postfix_expr "+=" assign_expr         -> assign_add
-                | postfix_expr "-=" assign_expr         -> assign_sub
-                | postfix_expr "*=" assign_expr         -> assign_mul
-                | postfix_expr "/=" assign_expr         -> assign_div
-                | postfix_expr "%=" assign_expr         -> assign_mod
+                | unary_expr "=" assign_expr          -> assign_eq
+                | unary_expr "+=" assign_expr         -> assign_add
+                | unary_expr "-=" assign_expr         -> assign_sub
+                | unary_expr "*=" assign_expr         -> assign_mul
+                | unary_expr "/=" assign_expr         -> assign_div
+                | unary_expr "%=" assign_expr         -> assign_mod
 
     ?logical_or_expr: logical_and_expr
                     | logical_or_expr "||" logical_and_expr     -> bin_or

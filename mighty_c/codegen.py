@@ -672,9 +672,12 @@ class CodeGenerator:
             return self._functions[name]
 
         # Check global variables
-        for gv in self.module.global_variables:
-            if gv.name == name:
+        try:
+            gv = self.module.get_global(name)
+            if isinstance(gv, ir.GlobalVariable):
                 return self.builder.load(gv, name=name)
+        except KeyError:
+            pass
 
         return None
 
@@ -688,10 +691,31 @@ class CodeGenerator:
         if left is None or right is None:
             return None
 
+        # Check for pointer arithmetic: pointer + int or int + pointer
+        op = expr.op
+        if op == "+" and isinstance(left.type, ir.PointerType) and isinstance(right.type, ir.IntType):
+            return self.builder.gep(left, [right], name="ptradd")
+        if op == "+" and isinstance(right.type, ir.PointerType) and isinstance(left.type, ir.IntType):
+            return self.builder.gep(right, [left], name="ptradd")
+        
+        # pointer - int
+        if op == "-" and isinstance(left.type, ir.PointerType) and isinstance(right.type, ir.IntType):
+            neg_right = self.builder.neg(right, name="neg")
+            return self.builder.gep(left, [neg_right], name="ptrsub")
+            
+        # pointer - pointer
+        if op == "-" and isinstance(left.type, ir.PointerType) and isinstance(right.type, ir.PointerType):
+            left_int = self.builder.ptrtoint(left, ir.IntType(32), name="left.int")
+            right_int = self.builder.ptrtoint(right, ir.IntType(32), name="right.int")
+            diff = self.builder.sub(left_int, right_int, name="ptrdiff")
+            elem_size = self._sizeof_llvm_type(left.type.pointee)
+            if elem_size > 1:
+                size_val = ir.Constant(ir.IntType(32), elem_size)
+                return self.builder.sdiv(diff, size_val, name="ptrdiff.div")
+            return diff
+
         # Coerce types to match
         left, right = self._coerce_pair(left, right)
-
-        op = expr.op
 
         if _is_float_type(left.type):
             return self._gen_float_binop(op, left, right)
@@ -772,10 +796,12 @@ class CodeGenerator:
             alloca = self._named_values.get(target.name)
             if alloca is None:
                 # Try global
-                for gv in self.module.global_variables:
-                    if gv.name == target.name:
+                try:
+                    gv = self.module.get_global(target.name)
+                    if isinstance(gv, ir.GlobalVariable):
                         alloca = gv
-                        break
+                except KeyError:
+                    pass
             if alloca is not None:
                 val = self._coerce(val, alloca.type.pointee)
                 self.builder.store(val, alloca)
@@ -1072,11 +1098,27 @@ class CodeGenerator:
         if isinstance(val.type, ir.PointerType) and isinstance(target_type, ir.PointerType):
             return self.builder.bitcast(val, target_type, name="ptrcast")
 
+        # Pointer to integer
+        if isinstance(val.type, ir.PointerType) and isinstance(target_type, ir.IntType):
+            return self.builder.ptrtoint(val, target_type, name="ptr2int")
+
+        # Integer to pointer
+        if isinstance(val.type, ir.IntType) and isinstance(target_type, ir.PointerType):
+            return self.builder.inttoptr(val, target_type, name="int2ptr")
+
         return val
 
     def _coerce_pair(self, left: ir.Value, right: ir.Value) -> tuple[ir.Value, ir.Value]:
         """Coerce a pair of values to a common type."""
         if left.type == right.type:
+            return left, right
+
+        # Pointer vs Int
+        if isinstance(left.type, ir.PointerType) and isinstance(right.type, ir.IntType):
+            left = self._coerce(left, right.type)
+            return left, right
+        if isinstance(right.type, ir.PointerType) and isinstance(left.type, ir.IntType):
+            right = self._coerce(right, left.type)
             return left, right
 
         # If one is float, promote the other

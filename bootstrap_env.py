@@ -195,7 +195,7 @@ def main():
     print("Environment Setup Complete!")
     print("====================================================")
     print("To compile a Mighty C file:")
-    print("  ./mighty-c.bat compile test.mc")
+    print("  ./mighty-c.bat compile tests/test.mc")
     print("====================================================")
 
 
