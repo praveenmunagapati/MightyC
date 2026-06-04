@@ -334,18 +334,50 @@ int next_label() {
 
 // Global scope tracker for variables
 char** local_vars;
+int* local_var_byte;
 int local_var_count;
 
-void add_local_var(char* name) {
+// Global variable type tracking
+char** global_vars;
+int* global_var_byte;
+int global_var_count;
+
+void add_local_var(char* name, int is_byte) {
     *(local_vars + local_var_count) = name;
+    *(local_var_byte + local_var_count) = is_byte;
     local_var_count = local_var_count + 1;
+}
+
+void add_global_var(char* name, int is_byte) {
+    *(global_vars + global_var_count) = name;
+    *(global_var_byte + global_var_count) = is_byte;
+    global_var_count = global_var_count + 1;
 }
 
 int is_local_var(char* name) {
     int i = 0;
     while (i < local_var_count) {
-        if (str_compare(*(local_vars + i), name, str_len(name))) {
+        if (str_compare(*(local_vars + i), name, str_len(name)) && str_len(*(local_vars + i)) == str_len(name)) {
             return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+int is_byte_var(char* name) {
+    int i = 0;
+    int nlen = str_len(name);
+    while (i < local_var_count) {
+        if (str_compare(*(local_vars + i), name, nlen) && str_len(*(local_vars + i)) == nlen) {
+            return *(local_var_byte + i);
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < global_var_count) {
+        if (str_compare(*(global_vars + i), name, nlen) && str_len(*(global_vars + i)) == nlen) {
+            return *(global_var_byte + i);
         }
         i = i + 1;
     }
@@ -358,11 +390,12 @@ int string_literal_count;
 
 char** parse_expr();
 
-char** val_new(int kind, int val, char* name) {
-    char** p = malloc(24);
+char** val_new(int kind, int val, char* name, int elem_size) {
+    char** p = malloc(32);
     *p = kind;
     *(p + 1) = val;
     *(p + 2) = name;
+    *(p + 3) = elem_size;
     return p;
 }
 
@@ -374,14 +407,24 @@ char** load_val(char** v) {
         } else {
             printf("  %%%d = load i64, i64* @%s\n", r_var, *(v + 2));
         }
-        return val_new(1, r_var, "");
+        return val_new(1, r_var, "", *(v + 3));
     }
     if (*v == 4) { // Dereferenced pointer
+        int esz = *(v + 3);
         int r_ptr = next_reg();
-        printf("  %%%d = inttoptr i64 %%%d to i64*\n", r_ptr, *(v + 1));
-        int r_deref = next_reg();
-        printf("  %%%d = load i64, i64* %%%d\n", r_deref, r_ptr);
-        return val_new(1, r_deref, "");
+        if (esz == 1) {
+            printf("  %%%d = inttoptr i64 %%%d to i8*\n", r_ptr, *(v + 1));
+            int r_byte = next_reg();
+            printf("  %%%d = load i8, i8* %%%d\n", r_byte, r_ptr);
+            int r_ext = next_reg();
+            printf("  %%%d = zext i8 %%%d to i64\n", r_ext, r_byte);
+            return val_new(1, r_ext, "", 8);
+        } else {
+            printf("  %%%d = inttoptr i64 %%%d to i64*\n", r_ptr, *(v + 1));
+            int r_deref = next_reg();
+            printf("  %%%d = load i64, i64* %%%d\n", r_deref, r_ptr);
+            return val_new(1, r_deref, "", 8);
+        }
     }
     return v;
 }
@@ -410,13 +453,13 @@ void print_val_ref(char** v) {
 char** parse_primary() {
     char** ret;
     if (token_type == TOK_INT) {
-        ret = val_new(0, token_val, "");
+        ret = val_new(0, token_val, "", 8);
         next_token();
         return ret;
     }
 
     if (token_type == TOK_NULL) {
-        ret = val_new(0, 0, "null");
+        ret = val_new(0, 0, "null", 8);
         next_token();
         return ret;
     }
@@ -444,7 +487,7 @@ char** parse_primary() {
         printf("  %%%d = ptrtoint i8* %%%d to i64\n", r_int, r_str);
         
         next_token();
-        return val_new(1, r_int, "");
+        return val_new(1, r_int, "", 1);
     }
 
     if (token_type == TOK_IDENT) {
@@ -456,15 +499,17 @@ char** parse_primary() {
             next_token(); // "("
             
             // Build arguments using dynamic heap pointers
-            int* arg_kinds = malloc(40);
-            int* arg_vals = malloc(40);
-            char** arg_names = malloc(40);
+            int* arg_kinds = malloc(80);
+            int* arg_vals = malloc(80);
+            char** arg_names = malloc(80);
+            int* arg_esizes = malloc(80);
             int arg_count = 0;
             if (token_type != TOK_SYMBOL || match_token(")") == 0) {
                 char** tmp = load_val(parse_expr());
                 *(arg_kinds + arg_count) = *tmp;
                 *(arg_vals + arg_count) = *(tmp + 1);
                 *(arg_names + arg_count) = *(tmp + 2);
+                *(arg_esizes + arg_count) = *(tmp + 3);
                 arg_count = arg_count + 1;
                 while (token_type == TOK_SYMBOL && match_token(",")) {
                     next_token();
@@ -472,6 +517,7 @@ char** parse_primary() {
                     *(arg_kinds + arg_count) = *tmp2;
                     *(arg_vals + arg_count) = *(tmp2 + 1);
                     *(arg_names + arg_count) = *(tmp2 + 2);
+                    *(arg_esizes + arg_count) = *(tmp2 + 3);
                     arg_count = arg_count + 1;
                 }
             }
@@ -495,7 +541,7 @@ char** parse_primary() {
             while (i < arg_count) {
                 if (i > 0) { printf(", "); }
                 printf("i64 "); // simplified all to i64
-                char** v = val_new(*(arg_kinds + i), *(arg_vals + i), *(arg_names + i));
+                char** v = val_new(*(arg_kinds + i), *(arg_vals + i), *(arg_names + i), *(arg_esizes + i));
                 print_val_ref(v);
                 free(v);
                 i = i + 1;
@@ -505,17 +551,22 @@ char** parse_primary() {
             free(arg_kinds);
             free(arg_vals);
             free(arg_names);
+            free(arg_esizes);
 
-            return val_new(1, r_call, "");
+            return val_new(1, r_call, "", 8);
         }
 
-        return val_new(2, 0, name);
+        int var_esz = 8;
+        if (is_byte_var(name)) {
+            var_esz = 1;
+        }
+        return val_new(2, 0, name, var_esz);
     }
 
     if (token_type == TOK_SYMBOL && match_token("*")) { // Dereference
         next_token();
         char** inner_deref = load_val(parse_primary());
-        return val_new(4, *(inner_deref + 1), "");
+        return val_new(4, *(inner_deref + 1), "", *(inner_deref + 3));
     }
 
     if (token_type == TOK_SYMBOL && match_token("&")) { // Address of
@@ -531,7 +582,7 @@ char** parse_primary() {
         } else {
             printf("  %%%d = ptrtoint i64* @%s to i64\n", r_addr, *(inner_addr + 2));
         }
-        return val_new(1, r_addr, "");
+        return val_new(1, r_addr, "", 8);
     }
 
     printf("; error: Unexpected primary token '%s'\n", token_str);
@@ -549,20 +600,30 @@ char** parse_expr() {
         char** right_assign = load_val(parse_expr());
         if (*left == 2) { // Variable assignment
             if (is_local_var(*(left + 2))) {
-                printf("  store i32 ");
+                printf("  store i64 ");
                 print_val_ref(right_assign);
-                printf(", i32* %%%s.alloca\n", *(left + 2));
+                printf(", i64* %%%s.alloca\n", *(left + 2));
             } else {
-                printf("  store i32 ");
+                printf("  store i64 ");
                 print_val_ref(right_assign);
-                printf(", i32* @%s\n", *(left + 2));
+                printf(", i64* @%s\n", *(left + 2));
             }
         } else if (*left == 4) { // Dereferenced pointer assignment
+            int store_esz = *(left + 3);
             int r_ptr = next_reg();
-            printf("  %%%d = inttoptr i32 %%%d to i32*\n", r_ptr, *(left + 1));
-            printf("  store i32 ");
-            print_val_ref(right_assign);
-            printf(", i32* %%%d\n", r_ptr);
+            if (store_esz == 1) {
+                printf("  %%%d = inttoptr i64 %%%d to i8*\n", r_ptr, *(left + 1));
+                int r_trunc = next_reg();
+                printf("  %%%d = trunc i64 ", r_trunc);
+                print_val_ref(right_assign);
+                printf(" to i8\n");
+                printf("  store i8 %%%d, i8* %%%d\n", r_trunc, r_ptr);
+            } else {
+                printf("  %%%d = inttoptr i64 %%%d to i64*\n", r_ptr, *(left + 1));
+                printf("  store i64 ");
+                print_val_ref(right_assign);
+                printf(", i64* %%%d\n", r_ptr);
+            }
         }
         return right_assign;
     }
@@ -586,91 +647,91 @@ char** parse_expr() {
 
         int r = next_reg();
         if (match_op(op, "+")) {
-            printf("  %%%d = add i32 ", r);
+            printf("  %%%d = add i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
         } else if (match_op(op, "-")) {
-            printf("  %%%d = sub i32 ", r);
+            printf("  %%%d = sub i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
         } else if (match_op(op, "*")) {
-            printf("  %%%d = mul i32 ", r);
+            printf("  %%%d = mul i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
         } else if (match_op(op, "/")) {
-            printf("  %%%d = sdiv i32 ", r);
+            printf("  %%%d = sdiv i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
         } else if (match_op(op, "==")) {
-            printf("  %%%d = icmp eq i32 ", r);
+            printf("  %%%d = icmp eq i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_eq = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_eq, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_eq, r);
             r = r2_eq;
         } else if (match_op(op, "!=")) {
-            printf("  %%%d = icmp ne i32 ", r);
+            printf("  %%%d = icmp ne i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_ne = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_ne, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_ne, r);
             r = r2_ne;
         } else if (match_op(op, "<=")) {
-            printf("  %%%d = icmp sle i32 ", r);
+            printf("  %%%d = icmp sle i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_le = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_le, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_le, r);
             r = r2_le;
         } else if (match_op(op, ">=")) {
-            printf("  %%%d = icmp sge i32 ", r);
+            printf("  %%%d = icmp sge i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_ge = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_ge, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_ge, r);
             r = r2_ge;
         } else if (match_op(op, "<")) {
-            printf("  %%%d = icmp slt i32 ", r);
+            printf("  %%%d = icmp slt i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_lt = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_lt, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_lt, r);
             r = r2_lt;
         } else if (match_op(op, ">")) {
-            printf("  %%%d = icmp sgt i32 ", r);
+            printf("  %%%d = icmp sgt i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
             int r2_gt = next_reg();
-            printf("  %%%d = zext i1 %%%d to i32\n", r2_gt, r);
+            printf("  %%%d = zext i1 %%%d to i64\n", r2_gt, r);
             r = r2_gt;
         } else if (match_op(op, "&&")) {
-            printf("  %%%d = and i32 ", r);
+            printf("  %%%d = and i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
             printf("\n");
         } else if (match_op(op, "||")) {
-            printf("  %%%d = or i32 ", r);
+            printf("  %%%d = or i64 ", r);
             print_val_ref(left);
             printf(", ");
             print_val_ref(right_op);
@@ -708,7 +769,7 @@ void parse_stmt() {
         int label_merge = next_label();
 
         int r_bool_if = next_reg();
-        printf("  %%%d = icmp ne i32 ", r_bool_if);
+        printf("  %%%d = icmp ne i64 ", r_bool_if);
         print_val_ref(cond_if);
         printf(", 0\n");
 
@@ -756,7 +817,7 @@ void parse_stmt() {
         expect_symbol(")");
 
         int r_bool_while = next_reg();
-        printf("  %%%d = icmp ne i32 ", r_bool_while);
+        printf("  %%%d = icmp ne i64 ", r_bool_while);
         print_val_ref(cond_while);
         printf(", 0\n");
 
@@ -780,7 +841,7 @@ void parse_stmt() {
         next_token();
         if (token_type != TOK_SYMBOL || match_token(";") == 0) {
             char** val = load_val(parse_expr());
-            printf("  ret i32 ");
+            printf("  ret i64 ");
             print_val_ref(val);
             printf("\n");
         } else {
@@ -802,10 +863,10 @@ void parse_stmt() {
         }
 
         // Handle pointer stars
-        int is_ptr = 0;
+        int ptr_depth = 0;
         while (token_type == TOK_SYMBOL && match_token("*")) {
             next_token();
-            is_ptr = 1;
+            ptr_depth = ptr_depth + 1;
         }
 
         if (token_type != TOK_IDENT) {
@@ -815,16 +876,18 @@ void parse_stmt() {
         char* name = token_str;
         next_token();
 
-        // Local allocation - simplify to alloca i32 for all local variables
-        add_local_var(name);
-        printf("  %%%s.alloca = alloca i32\n", name);
+        // Determine if this is a byte pointer (char* with depth 1)
+        int is_byte = (is_char && ptr_depth == 1);
+        // Local allocation - simplify to alloca i64 for all local variables
+        add_local_var(name, is_byte);
+        printf("  %%%s.alloca = alloca i64\n", name);
 
         if (token_type == TOK_SYMBOL && match_token("=")) {
             next_token();
             char** init = load_val(parse_expr());
-            printf("  store i32 ");
+            printf("  store i64 ");
             print_val_ref(init);
-            printf(", i32* %%%s.alloca\n", name);
+            printf(", i64* %%%s.alloca\n", name);
         }
         expect_symbol(";");
         return;
@@ -883,36 +946,45 @@ void parse_top_level() {
         next_token(); // "("
         
         // Parse parameters
-        char** params = malloc(40);
+        char** params = malloc(80);
+        int* param_byte = malloc(80);
         int param_count = 0;
         if (token_type != TOK_SYMBOL || match_token(")") == 0) {
             // type
+            int p_is_char = (token_type == TOK_CHAR_KEY);
             if (token_type == TOK_STRUCT) {
                 next_token(); // skip struct
                 next_token(); // skip struct name
+                p_is_char = 0;
             } else {
                 next_token(); // skip primitive type
             }
             // ptr stars
-            while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); }
+            int p_depth = 0;
+            while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); p_depth = p_depth + 1; }
             // name
             *(params + param_count) = token_str;
+            *(param_byte + param_count) = (p_is_char && p_depth == 1);
             param_count = param_count + 1;
             next_token();
 
             while (token_type == TOK_SYMBOL && match_token(",")) {
                 next_token();
                 // type
+                p_is_char = (token_type == TOK_CHAR_KEY);
                 if (token_type == TOK_STRUCT) {
                     next_token(); // skip struct
                     next_token(); // skip struct name
+                    p_is_char = 0;
                 } else {
                     next_token(); // skip primitive type
                 }
                 // ptr stars
-                while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); }
+                p_depth = 0;
+                while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); p_depth = p_depth + 1; }
                 // name
                 *(params + param_count) = token_str;
+                *(param_byte + param_count) = (p_is_char && p_depth == 1);
                 param_count = param_count + 1;
                 next_token();
             }
@@ -923,6 +995,7 @@ void parse_top_level() {
             // Forward declaration, skip
             next_token();
             free(params);
+            free(param_byte);
             return;
         }
 
@@ -930,12 +1003,12 @@ void parse_top_level() {
         if (is_void) {
             printf("define void @%s(", name);
         } else {
-            printf("define i32 @%s(", name);
+            printf("define i64 @%s(", name);
         }
         int i = 0;
         while (i < param_count) {
             if (i > 0) { printf(", "); }
-            printf("i32 %%%s", *(params + i));
+            printf("i64 %%%s", *(params + i));
             i = i + 1;
         }
         printf(") {\nentry:\n");
@@ -944,9 +1017,9 @@ void parse_top_level() {
         local_var_count = 0;
         i = 0;
         while (i < param_count) {
-            add_local_var(*(params + i));
-            printf("  %%%s.alloca = alloca i32\n", *(params + i));
-            printf("  store i32 %%%s, i32* %%%s.alloca\n", *(params + i), *(params + i));
+            add_local_var(*(params + i), *(param_byte + i));
+            printf("  %%%s.alloca = alloca i64\n", *(params + i));
+            printf("  store i64 %%%s, i64* %%%s.alloca\n", *(params + i), *(params + i));
             i = i + 1;
         }
 
@@ -962,7 +1035,7 @@ void parse_top_level() {
             if (is_void) {
                 printf("  ret void\n");
             } else {
-                printf("  ret i32 0\n");
+                printf("  ret i64 0\n");
             }
         }
         printf("}\n\n");
@@ -972,11 +1045,11 @@ void parse_top_level() {
 
     // Otherwise it is a global variable declaration!
     if (is_ptr) {
-        printf("@%s = internal global i32 0\n", name);
+        printf("@%s = internal global i64 0\n", name);
     } else if (is_char) {
-        printf("@%s = internal global i8 0\n", name);
+        printf("@%s = internal global i64 0\n", name);
     } else {
-        printf("@%s = internal global i32 0\n", name);
+        printf("@%s = internal global i64 0\n", name);
     }
 
     if (token_type == TOK_SYMBOL && match_token("=")) {
@@ -1033,14 +1106,14 @@ int main() {
     printf("; =========================================================================\n\n");
 
     // External library prototypes required for LLVM linkage
-    printf("declare i32 @printf(i32, ...)\n");
-    printf("declare i32 @sprintf(i32, i32, ...)\n");
-    printf("declare i32 @fopen(i32, i32)\n");
-    printf("declare i32 @fread(i32, i32, i32, i32)\n");
-    printf("declare i32 @fclose(i32)\n");
-    printf("declare i32 @malloc(i32)\n");
-    printf("declare void @free(i32)\n");
-    printf("declare void @exit(i32)\n\n");
+    printf("declare i64 @printf(i64, ...)\n");
+    printf("declare i64 @sprintf(i64, i64, ...)\n");
+    printf("declare i64 @fopen(i64, i64)\n");
+    printf("declare i64 @fread(i64, i64, i64, i64)\n");
+    printf("declare i64 @fclose(i64)\n");
+    printf("declare i64 @malloc(i64)\n");
+    printf("declare void @free(i64)\n");
+    printf("declare void @exit(i64)\n\n");
 
     // Loop through top level declarations
     while (token_type != TOK_EOF) {
