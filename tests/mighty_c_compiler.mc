@@ -15,6 +15,7 @@ int fread(char* buffer, int size, int count, char* stream);
 int fclose(char* stream);
 void exit(int status);
 int sprintf(char* str, char* format, int arg1);
+int fflush(char* stream);
 
 // Global variables for Lexer
 char* src;
@@ -42,6 +43,8 @@ int TOK_IMPORT;
 int TOK_EXPORT;
 int TOK_NULL;
 int TOK_STRUCT;
+int TOK_BREAK;
+int TOK_CONTINUE;
 int block_terminated;
 
 // Helpers
@@ -65,15 +68,15 @@ int str_compare(char* a, char* b, int len) {
 }
 
 int is_space(char c) {
-    return c == 32 || c == 9 || c == 10 || c == 13; // space, tab, newline, carriage return
+    return (c == 32) || (c == 9) || (c == 10) || (c == 13); // space, tab, newline, carriage return
 }
 
 int is_alpha(char c) {
-    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95; // A-Z, a-z, _
+    return ((c >= 65) && (c <= 90)) || ((c >= 97) && (c <= 122)) || (c == 95); // A-Z, a-z, _
 }
 
 int is_num(char c) {
-    return c >= 48 && c <= 57; // 0-9
+    return (c >= 48) && (c <= 57); // 0-9
 }
 
 int is_alnum(char c) {
@@ -81,15 +84,18 @@ int is_alnum(char c) {
 }
 
 int is_void_func(char* name) {
-    if (str_compare(name, "next_token", 10) && str_len(name) == 10) { return 1; }
-    if (str_compare(name, "expect_symbol", 13) && str_len(name) == 13) { return 1; }
-    if (str_compare(name, "add_local_var", 13) && str_len(name) == 13) { return 1; }
-    if (str_compare(name, "print_val_ref", 13) && str_len(name) == 13) { return 1; }
-    if (str_compare(name, "parse_block", 11) && str_len(name) == 11) { return 1; }
-    if (str_compare(name, "parse_stmt", 10) && str_len(name) == 10) { return 1; }
-    if (str_compare(name, "parse_top_level", 15) && str_len(name) == 15) { return 1; }
-    if (str_compare(name, "exit", 4) && str_len(name) == 4) { return 1; }
-    if (str_compare(name, "free", 4) && str_len(name) == 4) { return 1; }
+    if ((str_compare(name, "next_token", 10)) && (str_len(name) == 10)) { return 1; }
+    if ((str_compare(name, "next_token_impl", 15)) && (str_len(name) == 15)) { return 1; }
+    if ((str_compare(name, "expect_symbol", 13)) && (str_len(name) == 13)) { return 1; }
+    if ((str_compare(name, "add_local_var", 13)) && (str_len(name) == 13)) { return 1; }
+    if ((str_compare(name, "add_global_var", 14)) && (str_len(name) == 14)) { return 1; }
+    if ((str_compare(name, "print_val_ref", 13)) && (str_len(name) == 13)) { return 1; }
+    if ((str_compare(name, "print_hex_byte", 14)) && (str_len(name) == 14)) { return 1; }
+    if ((str_compare(name, "parse_block", 11)) && (str_len(name) == 11)) { return 1; }
+    if ((str_compare(name, "parse_stmt", 10)) && (str_len(name) == 10)) { return 1; }
+    if ((str_compare(name, "parse_top_level", 15)) && (str_len(name) == 15)) { return 1; }
+    if ((str_compare(name, "exit", 4)) && (str_len(name) == 4)) { return 1; }
+    if ((str_compare(name, "free", 4)) && (str_len(name) == 4)) { return 1; }
     return 0;
 }
 
@@ -99,7 +105,7 @@ char* unescape_string(char* s, int len) {
     int j = 0;
     while (i < len) {
         char c = *(s + i);
-        if (c == 92 && i + 1 < len) { // backslash
+        if ((c == 92) && ((i + 1) < len)) { // backslash
             char next = *(s + i + 1);
             if (next == 110) { // 'n'
                 *(dest + j) = 10;
@@ -133,7 +139,7 @@ void print_hex_byte(char c) {
         val = val + 256;
     }
     int h1 = val / 16;
-    int h2 = val - h1 * 16;
+    int h2 = val - (h1 * 16);
     printf("\\");
     if (h1 < 10) {
         printf("%c", h1 + 48);
@@ -159,28 +165,31 @@ char* str_copy(char* s, int len) {
     return copy;
 }
 
-// Lexer get next token
-void next_token() {
+// Lexer get next token implementation
+void next_token_impl() {
     // Skip spaces and comments
-    while (*src != 0) {
+    int keep_looping = 1;
+    while ((*src != 0) && keep_looping) {
         if (is_space(*src)) {
             src = src + 1;
-        } else if (*src == 47 && *(src + 1) == 47) { // "//" comment
+        } else if ((*src == 47) && (*(src + 1) == 47)) { // "//" comment
             src = src + 2;
-            while (*src != 10 && *src != 13 && *src != 0) {
+            while (((*src != 10) && (*src != 13)) && (*src != 0)) {
                 src = src + 1;
             }
-        } else if (*src == 47 && *(src + 1) == 42) { // "/*" comment
+        } else if ((*src == 47) && (*(src + 1) == 42)) { // "/*" comment
             src = src + 2;
-            while (*src != 0) {
-                if (*src == 42 && *(src + 1) == 47) {
+            int in_comment = 1;
+            while ((*src != 0) && in_comment) {
+                if ((*src == 42) && (*(src + 1) == 47)) {
                     src = src + 2;
-                    break;
+                    in_comment = 0;
+                } else {
+                    src = src + 1;
                 }
-                src = src + 1;
             }
         } else {
-            break;
+            keep_looping = 0;
         }
     }
 
@@ -217,17 +226,19 @@ void next_token() {
         token_type = TOK_IDENT;
 
         // Check keywords
-        if (len_ident == 3 && str_compare(name, "int", 3)) { token_type = TOK_INT_KEY; }
-        if (len_ident == 4 && str_compare(name, "char", 4)) { token_type = TOK_CHAR_KEY; }
-        if (len_ident == 4 && str_compare(name, "void", 4)) { token_type = TOK_VOID_KEY; }
-        if (len_ident == 2 && str_compare(name, "if", 2)) { token_type = TOK_IF; }
-        if (len_ident == 4 && str_compare(name, "else", 4)) { token_type = TOK_ELSE; }
-        if (len_ident == 5 && str_compare(name, "while", 5)) { token_type = TOK_WHILE; }
-        if (len_ident == 6 && str_compare(name, "return", 6)) { token_type = TOK_RETURN; }
-        if (len_ident == 6 && str_compare(name, "import", 6)) { token_type = TOK_IMPORT; }
-        if (len_ident == 6 && str_compare(name, "export", 6)) { token_type = TOK_EXPORT; }
-        if (len_ident == 4 && str_compare(name, "null", 4)) { token_type = TOK_NULL; }
-        if (len_ident == 6 && str_compare(name, "struct", 6)) { token_type = TOK_STRUCT; }
+        if ((len_ident == 3) && (str_compare(name, "int", 3))) { token_type = TOK_INT_KEY; }
+        if ((len_ident == 4) && (str_compare(name, "char", 4))) { token_type = TOK_CHAR_KEY; }
+        if ((len_ident == 4) && (str_compare(name, "void", 4))) { token_type = TOK_VOID_KEY; }
+        if ((len_ident == 2) && (str_compare(name, "if", 2))) { token_type = TOK_IF; }
+        if ((len_ident == 4) && (str_compare(name, "else", 4))) { token_type = TOK_ELSE; }
+        if ((len_ident == 5) && (str_compare(name, "while", 5))) { token_type = TOK_WHILE; }
+        if ((len_ident == 6) && (str_compare(name, "return", 6))) { token_type = TOK_RETURN; }
+        if ((len_ident == 6) && (str_compare(name, "import", 6))) { token_type = TOK_IMPORT; }
+        if ((len_ident == 6) && (str_compare(name, "export", 6))) { token_type = TOK_EXPORT; }
+        if ((len_ident == 4) && (str_compare(name, "null", 4))) { token_type = TOK_NULL; }
+        if ((len_ident == 6) && (str_compare(name, "struct", 6))) { token_type = TOK_STRUCT; }
+        if ((len_ident == 5) && (str_compare(name, "break", 5))) { token_type = TOK_BREAK; }
+        if ((len_ident == 8) && (str_compare(name, "continue", 8))) { token_type = TOK_CONTINUE; }
 
         return;
     }
@@ -236,7 +247,7 @@ void next_token() {
     if (*src == 34) { // '"'
         src = src + 1;
         char* start_str = src;
-        while (*src != 34 && *src != 0) {
+        while ((*src != 34) && (*src != 0)) {
             // Handle escaped characters if any
             src = src + 1;
         }
@@ -250,37 +261,37 @@ void next_token() {
     }
 
     // Multi-character operators
-    if (*src == 61 && *(src + 1) == 61) { // "=="
+    if ((*src == 61) && (*(src + 1) == 61)) { // "=="
         src = src + 2;
         token_str = "==";
         token_type = TOK_SYMBOL;
         return;
     }
-    if (*src == 33 && *(src + 1) == 61) { // "!="
+    if ((*src == 33) && (*(src + 1) == 61)) { // "!="
         src = src + 2;
         token_str = "!=";
         token_type = TOK_SYMBOL;
         return;
     }
-    if (*src == 60 && *(src + 1) == 61) { // "<="
+    if ((*src == 60) && (*(src + 1) == 61)) { // "<="
         src = src + 2;
         token_str = "<=";
         token_type = TOK_SYMBOL;
         return;
     }
-    if (*src == 62 && *(src + 1) == 61) { // ">="
+    if ((*src == 62) && (*(src + 1) == 61)) { // ">="
         src = src + 2;
         token_str = ">=";
         token_type = TOK_SYMBOL;
         return;
     }
-    if (*src == 38 && *(src + 1) == 38) { // "&&"
+    if ((*src == 38) && (*(src + 1) == 38)) { // "&&"
         src = src + 2;
         token_str = "&&";
         token_type = TOK_SYMBOL;
         return;
     }
-    if (*src == 124 && *(src + 1) == 124) { // "||"
+    if ((*src == 124) && (*(src + 1) == 124)) { // "||"
         src = src + 2;
         token_str = "||";
         token_type = TOK_SYMBOL;
@@ -292,6 +303,12 @@ void next_token() {
     src = src + 1;
     token_str = sym;
     token_type = TOK_SYMBOL;
+}
+
+void next_token() {
+    next_token_impl();
+    printf("; token len: %d type: %d\n", str_len(token_str), token_type);
+    fflush(0);
 }
 
 int match_token(char* s) {
@@ -311,7 +328,7 @@ int match_op(char* op, char* s) {
 }
 
 void expect_symbol(char* s) {
-    if (token_type != TOK_SYMBOL || match_token(s) == 0) {
+    if ((token_type != TOK_SYMBOL) || (match_token(s) == 0)) {
         printf("; error: Expected symbol '%s', got '%s'\n", s, token_str);
         exit(1);
     }
@@ -331,6 +348,11 @@ int next_label() {
     label_counter = label_counter + 1;
     return label_counter;
 }
+
+// Global loop exit/cond label stacks
+int* break_stack;
+int* continue_stack;
+int loop_depth;
 
 // Global scope tracker for variables
 char** local_vars;
@@ -357,7 +379,7 @@ void add_global_var(char* name, int is_byte) {
 int is_local_var(char* name) {
     int i = 0;
     while (i < local_var_count) {
-        if (str_compare(*(local_vars + i), name, str_len(name)) && str_len(*(local_vars + i)) == str_len(name)) {
+        if ((str_compare(*(local_vars + i), name, str_len(name))) && (str_len(*(local_vars + i)) == str_len(name))) {
             return 1;
         }
         i = i + 1;
@@ -365,18 +387,18 @@ int is_local_var(char* name) {
     return 0;
 }
 
-int is_byte_var(char* name) {
+int get_var_elem_size(char* name) {
     int i = 0;
     int nlen = str_len(name);
     while (i < local_var_count) {
-        if (str_compare(*(local_vars + i), name, nlen) && str_len(*(local_vars + i)) == nlen) {
+        if ((str_compare(*(local_vars + i), name, nlen)) && (str_len(*(local_vars + i)) == nlen)) {
             return *(local_var_byte + i);
         }
         i = i + 1;
     }
     i = 0;
     while (i < global_var_count) {
-        if (str_compare(*(global_vars + i), name, nlen) && str_len(*(global_vars + i)) == nlen) {
+        if ((str_compare(*(global_vars + i), name, nlen)) && (str_len(*(global_vars + i)) == nlen)) {
             return *(global_var_byte + i);
         }
         i = i + 1;
@@ -418,12 +440,12 @@ char** load_val(char** v) {
             printf("  %%%d = load i8, i8* %%%d\n", r_byte, r_ptr);
             int r_ext = next_reg();
             printf("  %%%d = zext i8 %%%d to i64\n", r_ext, r_byte);
-            return val_new(1, r_ext, "", 8);
+            return val_new(1, r_ext, "", 0);
         } else {
             printf("  %%%d = inttoptr i64 %%%d to i64*\n", r_ptr, *(v + 1));
             int r_deref = next_reg();
             printf("  %%%d = load i64, i64* %%%d\n", r_deref, r_ptr);
-            return val_new(1, r_deref, "", 8);
+            return val_new(1, r_deref, "", 1);
         }
     }
     return v;
@@ -431,7 +453,7 @@ char** load_val(char** v) {
 
 void print_val_ref(char** v) {
     if (*v == 0) {
-        if (str_len(*(v + 2)) == 4 && str_compare(*(v + 2), "null", 4)) {
+        if ((str_len(*(v + 2)) == 4) && (str_compare(*(v + 2), "null", 4))) {
             printf("0");
         } else {
             printf("%d", *(v + 1));
@@ -453,13 +475,13 @@ void print_val_ref(char** v) {
 char** parse_primary() {
     char** ret;
     if (token_type == TOK_INT) {
-        ret = val_new(0, token_val, "", 8);
+        ret = val_new(0, token_val, "", 0);
         next_token();
         return ret;
     }
 
     if (token_type == TOK_NULL) {
-        ret = val_new(0, 0, "null", 8);
+        ret = val_new(0, 0, "null", 0);
         next_token();
         return ret;
     }
@@ -504,7 +526,7 @@ char** parse_primary() {
             char** arg_names = malloc(80);
             int* arg_esizes = malloc(80);
             int arg_count = 0;
-            if (token_type != TOK_SYMBOL || match_token(")") == 0) {
+            if ((token_type != TOK_SYMBOL) || (match_token(")") == 0)) {
                 char** tmp = load_val(parse_expr());
                 *(arg_kinds + arg_count) = *tmp;
                 *(arg_vals + arg_count) = *(tmp + 1);
@@ -529,9 +551,9 @@ char** parse_primary() {
                 printf("  call void @%s(", name);
             } else {
                 r_call = next_reg();
-                if (str_compare(name, "printf", 6) && str_len(name) == 6) {
+                if ((str_compare(name, "printf", 6)) && (str_len(name) == 6)) {
                     printf("  %%%d = call i64 (i64, ...) @%s(", r_call, name);
-                } else if (str_compare(name, "sprintf", 7) && str_len(name) == 7) {
+                } else if ((str_compare(name, "sprintf", 7)) && (str_len(name) == 7)) {
                     printf("  %%%d = call i64 (i64, ...) @%s(", r_call, name);
                 } else {
                     printf("  %%%d = call i64 @%s(", r_call, name);
@@ -553,13 +575,10 @@ char** parse_primary() {
             free(arg_names);
             free(arg_esizes);
 
-            return val_new(1, r_call, "", 8);
+            return val_new(1, r_call, "", 0);
         }
 
-        int var_esz = 8;
-        if (is_byte_var(name)) {
-            var_esz = 1;
-        }
+        int var_esz = get_var_elem_size(name);
         return val_new(2, 0, name, var_esz);
     }
 
@@ -592,6 +611,7 @@ char** parse_primary() {
 
 // Simple binary expression parser
 char** parse_expr() {
+    int esz;
     char** left = parse_primary();
 
     // Check for assignment: left = right
@@ -647,17 +667,41 @@ char** parse_expr() {
 
         int r = next_reg();
         if (match_op(op, "+")) {
-            printf("  %%%d = add i64 ", r);
-            print_val_ref(left);
-            printf(", ");
-            print_val_ref(right_op);
-            printf("\n");
+            esz = *(left + 3);
+            if (esz > 0) {
+                printf("  %%%d = mul i64 ", r);
+                print_val_ref(right_op);
+                printf(", %d\n", esz);
+                int r_add = next_reg();
+                printf("  %%%d = add i64 ", r_add);
+                print_val_ref(left);
+                printf(", %%%d\n", r);
+                r = r_add;
+            } else {
+                printf("  %%%d = add i64 ", r);
+                print_val_ref(left);
+                printf(", ");
+                print_val_ref(right_op);
+                printf("\n");
+            }
         } else if (match_op(op, "-")) {
-            printf("  %%%d = sub i64 ", r);
-            print_val_ref(left);
-            printf(", ");
-            print_val_ref(right_op);
-            printf("\n");
+            esz = *(left + 3);
+            if (esz > 0) {
+                printf("  %%%d = mul i64 ", r);
+                print_val_ref(right_op);
+                printf(", %d\n", esz);
+                int r_sub = next_reg();
+                printf("  %%%d = sub i64 ", r_sub);
+                print_val_ref(left);
+                printf(", %%%d\n", r);
+                r = r_sub;
+            } else {
+                printf("  %%%d = sub i64 ", r);
+                print_val_ref(left);
+                printf(", ");
+                print_val_ref(right_op);
+                printf("\n");
+            }
         } else if (match_op(op, "*")) {
             printf("  %%%d = mul i64 ", r);
             print_val_ref(left);
@@ -751,7 +795,7 @@ void parse_stmt();
 
 void parse_block() {
     expect_symbol("{");
-    while (token_type != TOK_SYMBOL || match_token("}") == 0) {
+    while ((token_type != TOK_SYMBOL) || (match_token("}") == 0)) {
         parse_stmt();
     }
     expect_symbol("}");
@@ -799,6 +843,9 @@ void parse_stmt() {
         // Merge block
         printf("if.merge.%d:\n", label_merge);
         block_terminated = then_terminated && else_terminated;
+        if (block_terminated) {
+            printf("  unreachable\n");
+        }
         return;
     }
 
@@ -823,6 +870,11 @@ void parse_stmt() {
 
         printf("  br i1 %%%d, label %%while.body.%d, label %%while.after.%d\n", r_bool_while, label_body, label_after);
 
+        // Push labels to loop stacks
+        *(break_stack + loop_depth) = label_after;
+        *(continue_stack + loop_depth) = label_cond;
+        loop_depth = loop_depth + 1;
+
         // Body
         printf("while.body.%d:\n", label_body);
         block_terminated = 0;
@@ -831,15 +883,44 @@ void parse_stmt() {
             printf("  br label %%while.cond.%d\n", label_cond);
         }
 
+        // Pop labels
+        loop_depth = loop_depth - 1;
+
         // After
         printf("while.after.%d:\n", label_after);
         block_terminated = 0;
         return;
     }
 
+    if (token_type == TOK_BREAK) {
+        next_token();
+        if (loop_depth == 0) {
+            printf("; error: 'break' outside of loop\n");
+            exit(1);
+        }
+        int b_lbl = *(break_stack + (loop_depth - 1));
+        printf("  br label %%while.after.%d\n", b_lbl);
+        expect_symbol(";");
+        block_terminated = 1;
+        return;
+    }
+
+    if (token_type == TOK_CONTINUE) {
+        next_token();
+        if (loop_depth == 0) {
+            printf("; error: 'continue' outside of loop\n");
+            exit(1);
+        }
+        int c_lbl = *(continue_stack + (loop_depth - 1));
+        printf("  br label %%while.cond.%d\n", c_lbl);
+        expect_symbol(";");
+        block_terminated = 1;
+        return;
+    }
+
     if (token_type == TOK_RETURN) {
         next_token();
-        if (token_type != TOK_SYMBOL || match_token(";") == 0) {
+        if ((token_type != TOK_SYMBOL) || (match_token(";") == 0)) {
             char** val = load_val(parse_expr());
             printf("  ret i64 ");
             print_val_ref(val);
@@ -852,7 +933,7 @@ void parse_stmt() {
         return;
     }
 
-    if (token_type == TOK_INT_KEY || token_type == TOK_CHAR_KEY || token_type == TOK_STRUCT) {
+    if ((token_type == TOK_INT_KEY) || (token_type == TOK_CHAR_KEY) || (token_type == TOK_STRUCT)) {
         // Variable declaration: type name = init;
         int is_char = (token_type == TOK_CHAR_KEY);
         int is_struct = (token_type == TOK_STRUCT);
@@ -876,10 +957,16 @@ void parse_stmt() {
         char* name = token_str;
         next_token();
 
-        // Determine if this is a byte pointer (char* with depth 1)
-        int is_byte = (is_char && ptr_depth == 1);
+        // Determine element size for variable
+        int decl_esz = 0;
+        if (ptr_depth == 1) {
+            if (is_char) { decl_esz = 1; }
+            else { decl_esz = 8; }
+        } else if (ptr_depth > 1) {
+            decl_esz = 8;
+        }
         // Local allocation - simplify to alloca i64 for all local variables
-        add_local_var(name, is_byte);
+        add_local_var(name, decl_esz);
         printf("  %%%s.alloca = alloca i64\n", name);
 
         if (token_type == TOK_SYMBOL && match_token("=")) {
@@ -905,6 +992,7 @@ void parse_stmt() {
 
 // Top-level declaration parser (functions, forward declarations, and global variables)
 void parse_top_level() {
+    int p_esz;
     int is_void = (token_type == TOK_VOID_KEY);
     int is_char = (token_type == TOK_CHAR_KEY);
     int is_struct = (token_type == TOK_STRUCT);
@@ -919,7 +1007,7 @@ void parse_top_level() {
 
         if (token_type == TOK_SYMBOL && match_token("{")) {
             next_token(); // skip "{"
-            while (token_type != TOK_SYMBOL || match_token("}") == 0) {
+            while ((token_type != TOK_SYMBOL) || (match_token("}") == 0)) {
                 next_token(); // skip fields
             }
             expect_symbol("}");
@@ -928,10 +1016,10 @@ void parse_top_level() {
     }
 
     // Handle pointer stars
-    int is_ptr = 0;
+    int ptr_depth_top = 0;
     while (token_type == TOK_SYMBOL && match_token("*")) {
         next_token();
-        is_ptr = 1;
+        ptr_depth_top = ptr_depth_top + 1;
     }
 
     if (token_type != TOK_IDENT) {
@@ -944,12 +1032,13 @@ void parse_top_level() {
     if (token_type == TOK_SYMBOL && match_token("(")) {
         // Function!
         next_token(); // "("
+        local_var_count = 0;
         
         // Parse parameters
         char** params = malloc(80);
         int* param_byte = malloc(80);
         int param_count = 0;
-        if (token_type != TOK_SYMBOL || match_token(")") == 0) {
+        if ((token_type != TOK_SYMBOL) || (match_token(")") == 0)) {
             // type
             int p_is_char = (token_type == TOK_CHAR_KEY);
             if (token_type == TOK_STRUCT) {
@@ -964,7 +1053,14 @@ void parse_top_level() {
             while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); p_depth = p_depth + 1; }
             // name
             *(params + param_count) = token_str;
-            *(param_byte + param_count) = (p_is_char && p_depth == 1);
+            p_esz = 0;
+            if (p_depth == 1) {
+                if (p_is_char) { p_esz = 1; }
+                else { p_esz = 8; }
+            } else if (p_depth > 1) {
+                p_esz = 8;
+            }
+            *(param_byte + param_count) = p_esz;
             param_count = param_count + 1;
             next_token();
 
@@ -984,7 +1080,14 @@ void parse_top_level() {
                 while (token_type == TOK_SYMBOL && match_token("*")) { next_token(); p_depth = p_depth + 1; }
                 // name
                 *(params + param_count) = token_str;
-                *(param_byte + param_count) = (p_is_char && p_depth == 1);
+                p_esz = 0;
+                if (p_depth == 1) {
+                    if (p_is_char) { p_esz = 1; }
+                    else { p_esz = 8; }
+                } else if (p_depth > 1) {
+                    p_esz = 8;
+                }
+                *(param_byte + param_count) = p_esz;
                 param_count = param_count + 1;
                 next_token();
             }
@@ -1040,17 +1143,20 @@ void parse_top_level() {
         }
         printf("}\n\n");
         free(params);
+        free(param_byte);
         return;
     }
 
     // Otherwise it is a global variable declaration!
-    if (is_ptr) {
-        printf("@%s = internal global i64 0\n", name);
-    } else if (is_char) {
-        printf("@%s = internal global i64 0\n", name);
-    } else {
-        printf("@%s = internal global i64 0\n", name);
+    int g_esz = 0;
+    if (ptr_depth_top == 1) {
+        if (is_char) { g_esz = 1; }
+        else { g_esz = 8; }
+    } else if (ptr_depth_top > 1) {
+        g_esz = 8;
     }
+    add_global_var(name, g_esz);
+    printf("@%s = internal global i64 0\n", name);
 
     if (token_type == TOK_SYMBOL && match_token("=")) {
         next_token();
@@ -1069,7 +1175,11 @@ int main() {
     }
 
     char* buffer = malloc(100000); // Allocate buffer for source code
-    local_vars = malloc(400);      // Allocate local variables table
+    local_vars = malloc(8000);      // Allocate local variables table
+    local_var_byte = malloc(8000);  // Allocate local variables byte flag table
+    global_vars = malloc(8000);     // Allocate global variables table
+    global_var_byte = malloc(8000); // Allocate global variables byte flag table
+    global_var_count = 0;
     int bytes_read = fread(buffer, 1, 100000, stream);
     *(buffer + bytes_read) = 0; // Null terminate
     fclose(stream);
@@ -1094,8 +1204,14 @@ int main() {
     TOK_EXPORT = 18;
     TOK_NULL = 19;
     TOK_STRUCT = 20;
+    TOK_BREAK = 21;
+    TOK_CONTINUE = 22;
 
-    string_literals = malloc(8000);
+    break_stack = malloc(800);
+    continue_stack = malloc(800);
+    loop_depth = 0;
+
+    string_literals = malloc(16000);
     string_literal_count = 0;
 
     src = buffer;
@@ -1111,6 +1227,7 @@ int main() {
     printf("declare i64 @fopen(i64, i64)\n");
     printf("declare i64 @fread(i64, i64, i64, i64)\n");
     printf("declare i64 @fclose(i64)\n");
+    printf("declare i64 @fflush(i64)\n");
     printf("declare i64 @malloc(i64)\n");
     printf("declare void @free(i64)\n");
     printf("declare void @exit(i64)\n\n");
@@ -1124,7 +1241,7 @@ int main() {
         } else if (token_type == TOK_EXPORT) {
             next_token();
             parse_top_level();
-        } else if (token_type == TOK_INT_KEY || token_type == TOK_CHAR_KEY || token_type == TOK_VOID_KEY || token_type == TOK_STRUCT) {
+        } else if ((token_type == TOK_INT_KEY) || (token_type == TOK_CHAR_KEY) || (token_type == TOK_VOID_KEY) || (token_type == TOK_STRUCT)) {
             parse_top_level();
         } else {
             // Unhandled top-level element, skip it
@@ -1151,6 +1268,9 @@ int main() {
 
     free(buffer);
     free(local_vars);
+    free(local_var_byte);
+    free(global_vars);
+    free(global_var_byte);
     free(string_literals);
     return 0;
 }
